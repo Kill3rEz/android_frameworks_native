@@ -787,7 +787,31 @@ auto RefreshRateSelector::getRankedFrameRatesLocked(const std::vector<LayerRequi
     if (!signals.touch && signals.idle &&
         !(policy->primaryRangeIsSingleRate() && hasExplicitVoteLayers)) {
         ALOGV("Idle");
+#ifdef FRAME_RATE_CATEGORY_MIN
+        // LTPO (surfaceflinger.frame_rate_category_min set): pick the single
+        // lowest mode in the active group that is >= kMinSupportedFrameRate, so
+        // idle can drop to the panel's floor (e.g. 1 Hz). Falls back to the
+        // stock ascending ranking if no eligible mode is found.
+        const auto idleAnchorGroup = activeMode.getGroup();
+        auto idleBestMode = mPrimaryFrameRates.end();
+        for (auto it = mPrimaryFrameRates.begin(); it != mPrimaryFrameRates.end(); ++it) {
+            if (it->modePtr->getGroup() != idleAnchorGroup) continue;
+            if (isStrictlyLess(it->fps, kMinSupportedFrameRate)) continue;
+            if (idleBestMode == mPrimaryFrameRates.end() ||
+                isStrictlyLess(it->fps, idleBestMode->fps)) {
+                idleBestMode = it;
+            }
+        }
+        FrameRateRanking ranking;
+        if (idleBestMode != mPrimaryFrameRates.end()) {
+            constexpr float kMaxScore = std::numeric_limits<float>::max();
+            ranking.push_back(ScoredFrameRate{*idleBestMode, kMaxScore});
+        } else {
+            ranking = rankFrameRates(idleAnchorGroup, RefreshRateOrder::Ascending);
+        }
+#else
         const auto ranking = rankFrameRates(activeMode.getGroup(), RefreshRateOrder::Ascending);
+#endif
         SFTRACE_FORMAT_INSTANT("%s (Idle)", to_string(ranking.front().frameRateMode.fps).c_str());
         return {ranking, GlobalSignals{.idle = true}};
     }
